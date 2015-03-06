@@ -45,13 +45,70 @@ public class SAMTextWriter extends SAMFileWriterImpl {
     private final TextTagCodec tagCodec = new TextTagCodec();
     private final SAMTagUtil tagUtil = new SAMTagUtil();
 
+    private final FlagFieldsOutput flagFieldsOutput;
+
+    /**
+     * This determines how flag fields are represented in the output.
+     *  
+     * In a string FLAG, each character represents one bit with
+     * p=0x1 (paired), P=0x2 (properly paired), u=0x4 (unmapped),
+     * U=0x8 (mate unmapped), r=0x10 (reverse), R=0x20 (mate reverse)
+     * 1=0x40 (first), 2=0x80 (second), s=0x100 (not primary), 
+     * f=0x200 (failure), d=0x400 (duplicate), and S=0x800 (secondary).  
+     * This was inspired by 'samtools view -X'.
+     */
+    public enum FlagFieldsOutput {
+        /**
+         * NONE is here so that when the user specifies a value on the command line (Defaults.FLAG_FIELDS_OUTPUT), 
+         * we use the Defaults.FLAG_FIELDS_OUTPUT value rather than FlagFieldsOutput.DEFAULT.  See the SAMFileWriterFactory.
+         */
+        NONE {
+            @Override
+            public String format(final SAMRecord record) {
+                throw new SAMException("NONE not allowed for the FlagFieldsOutput when writing the SAM flag field.");
+            }
+        },
+        DEFAULT {
+            @Override
+            public String format(final SAMRecord record) {
+                return Integer.toString(record.getFlags());
+            }
+        },
+        HEXADECIMAL {
+            @Override
+            public String format(final SAMRecord record) {
+                return String.format("0x%x", record.getFlags());
+            }
+        },
+        STRING {
+            private final String flag2CharTable = "pPuUrR12sxdS\0\0\0\0"; // when the bit is set
+            private final String notFlag2CharTable = "\0\0mMfF\0\0\0\0\0\0\0\0\0\0"; // when the bit is not set
+
+            private String getStringFlags(final int flag) {
+                String s = "";
+                for (int i = 0; i < 16; ++i) {
+                    if ((flag & 1 << i) != 0) {
+                        if ('\0' != flag2CharTable.charAt(i)) s += flag2CharTable.charAt(i);
+                        else if ('\0' != notFlag2CharTable.charAt(i)) s += notFlag2CharTable.charAt(i);
+                    }
+                }
+                return s;
+            }
+
+            @Override
+            public String format(final SAMRecord record) {
+                return getStringFlags(record.getFlags());
+            }
+        };
+        abstract public String format(final SAMRecord record);
+    }
+    
     /**
      * Constructs a SAMTextWriter that outputs to a Writer.
      * @param out Writer.
      */
-    public SAMTextWriter(Writer out) {
-	this.out = out;
-	this.file = null;
+    public SAMTextWriter(final Writer out) {
+        this(out, FlagFieldsOutput.DEFAULT);
     }
 
     /**
@@ -59,12 +116,7 @@ public class SAMTextWriter extends SAMFileWriterImpl {
      * @param file Where to write the output.
      */
     public SAMTextWriter(final File file) {
-        try {
-            this.file = file;
-            this.out = new AsciiWriter(new FileOutputStream(file));
-        } catch (IOException e) {
-            throw new RuntimeIOException(e);
-        }
+        this(file, FlagFieldsOutput.DEFAULT);
     }
 
     /**
@@ -80,8 +132,42 @@ public class SAMTextWriter extends SAMFileWriterImpl {
      * @param stream Need not be buffered because this class provides buffering. 
      */
     public SAMTextWriter(final OutputStream stream) {
+        this(stream, FlagFieldsOutput.DEFAULT);
+    }
+
+    /**
+     * Constructs a SAMTextWriter that outputs to a Writer.
+     * @param out Writer.
+     */
+    public SAMTextWriter(final Writer out, final FlagFieldsOutput flagFieldsOutput) {
+        this.out = out;
+        this.file = null;
+        this.flagFieldsOutput = flagFieldsOutput;
+    }
+
+    /**
+     * Constructs a SAMTextWriter that writes to a File.
+     * @param file Where to write the output.
+     */
+    public SAMTextWriter(final File file, final FlagFieldsOutput flagFieldsOutput) {
+        try {
+            this.file = file;
+            this.out = new AsciiWriter(new FileOutputStream(file));
+        } catch (final IOException e) {
+            throw new RuntimeIOException(e);
+        }
+        this.flagFieldsOutput = flagFieldsOutput;
+    }
+
+    /**
+     * Constructs a SAMTextWriter that writes to an OutputStream.  The OutputStream
+     * is wrapped in an AsciiWriter, which can be retrieved with getWriter().
+     * @param stream Need not be buffered because this class provides buffering.
+     */
+    public SAMTextWriter(final OutputStream stream, final FlagFieldsOutput flagFieldsOutput) {
         this.file = null;
         this.out = new AsciiWriter(stream);
+        this.flagFieldsOutput = flagFieldsOutput;
     }
 
     /**
@@ -93,7 +179,7 @@ public class SAMTextWriter extends SAMFileWriterImpl {
         try {
             out.write(alignment.getReadName());
             out.write(FIELD_SEPARATOR);
-            out.write(Integer.toString(alignment.getFlags()));
+            out.write(this.flagFieldsOutput.format(alignment));
             out.write(FIELD_SEPARATOR);
             out.write(alignment.getReferenceName());
             out.write(FIELD_SEPARATOR);
@@ -133,7 +219,7 @@ public class SAMTextWriter extends SAMFileWriterImpl {
             }
             out.write("\n");
 
-        } catch (IOException e) {
+        } catch (final IOException e) {
             throw new RuntimeIOException(e);
         }
     }
@@ -142,11 +228,11 @@ public class SAMTextWriter extends SAMFileWriterImpl {
     private static SAMTextWriter textWriter = null;
     private static StringWriter stringWriter = null;
     static synchronized String getSAMString(final SAMRecord alignment) {
-	if (stringWriter == null) stringWriter = new StringWriter();
-	if (textWriter == null) textWriter = new SAMTextWriter(stringWriter);
-	stringWriter.getBuffer().setLength(0);
-	textWriter.writeAlignment(alignment);
-	return stringWriter.toString();
+        if (stringWriter == null) stringWriter = new StringWriter();
+        if (textWriter == null) textWriter = new SAMTextWriter(stringWriter);
+        stringWriter.getBuffer().setLength(0);
+        textWriter.writeAlignment(alignment);
+        return stringWriter.toString();
     }
 
     /**
@@ -158,7 +244,7 @@ public class SAMTextWriter extends SAMFileWriterImpl {
     public void writeHeader(final String textHeader) {
         try {
             out.write(textHeader);
-        } catch (IOException e) {
+        } catch (final IOException e) {
             throw new RuntimeIOException(e);
         }
     }
@@ -169,7 +255,7 @@ public class SAMTextWriter extends SAMFileWriterImpl {
     public void finish() {
         try {
             out.close();
-        } catch (IOException e) {
+        } catch (final IOException e) {
             throw new RuntimeIOException(e);
         }
     }
