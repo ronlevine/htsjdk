@@ -101,7 +101,8 @@ public interface FeatureCodec<FEATURE_TYPE extends Feature, SOURCE> {
 
     /**
      * This function returns true iff the File potentialInput can be parsed by this
-     * codec.
+     * codec. Note that checking the file's extension is a perfectly acceptable implementation of this method
+     * and file contents only rarely need to be checked.
      * <p/>
      * There is an assumption that there's never a situation where two different Codecs
      * return true for the same file.  If this occurs, the recommendation would be to error out.

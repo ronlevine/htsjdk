@@ -89,6 +89,11 @@ public class OldDbSNPCodec extends AsciiFeatureCodec<OldDbSNPFeature> {
     }
 
     @Override
+    public boolean canDecode(String path){
+	return path.toLowerCase().endsWith(".dbsnp") || path.toLowerCase().endsWith(".rod") || path.toLowerCase().endsWith(".snp");
+    }
+
+    @Override
     public Object readActualHeader(final LineIterator reader) {
         return null;
     }
